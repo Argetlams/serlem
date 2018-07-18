@@ -150,7 +150,7 @@ int				main()
 	while (1)
 	{
 		res = read_gpio(data.gpioclk, data.gpiodata, data.bytes[0]);
-		printf("%d\n", res);
+//		printf("%d\n", res);
 		gpioDelay(500);
 		if (ctrl_c_pressed)
 		{

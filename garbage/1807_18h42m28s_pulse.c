@@ -81,7 +81,7 @@ static char		read_gpio(int gpioclk, int gpiodata, char addr)
 	gpioDelay(4);
 	nbit = 7;
 	tmp2 = 128;
-//	printf("addr = %d\n", addr);
+	printf("addr = %d\n", addr);
 	while (nbit >= 0)
 	{
 		tmp = addr;
@@ -111,7 +111,6 @@ static char		read_gpio(int gpioclk, int gpiodata, char addr)
 		nbit++;
 	}
 //	printf("\n");
-	gpioSetMode(gpiodata, PI_OUTPUT);
 	gpioWrite(gpiodata, HIGH);
 	return (res);
 }
@@ -144,13 +143,13 @@ int				main()
 	data.gpioclk = 27;
 	data.gpiodata = 17;
 	gpioSetMode(data.gpioclk, PI_OUTPUT);
-	gpioSetMode(data.gpiodata, PI_OUTPUT);
+	gpioSetMode(data.gpiodata, PI_INPUT);
 	signal(SIGINT, sigintHandler);
 	make_bytes(&data, 1);
 	while (1)
 	{
 		res = read_gpio(data.gpioclk, data.gpiodata, data.bytes[0]);
-		printf("%d\n", res);
+//		printf("%d\n", res);
 		gpioDelay(500);
 		if (ctrl_c_pressed)
 		{

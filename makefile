@@ -12,7 +12,6 @@ LDFLAGS = -lpigpio -lrt -lpthread
 
 BKUPNAME = $(LOGPATH)$(shell date +%d%m_%Hh%Mm%Ss_)$(TMP)
 
-
 define	colorecho
 		@tput setaf $1
 		@echo $2
