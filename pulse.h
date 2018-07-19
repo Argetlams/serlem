@@ -21,6 +21,14 @@
 
 int						ctrl_c_pressed;
 typedef char			t_bool;
+
+typedef struct			s_bytes_com
+{
+	char				*addr;
+	char				*reg;
+	char				*data;
+}						t_bytes_com;
+
 typedef struct			s_data
 {
 	int					handle;
@@ -28,8 +36,9 @@ typedef struct			s_data
 	int					gpioclk;
 	int					gpiodata;
 	char				addr;
-	char				*bytes;
-//	char				rec[10];
+	char				bytes[5];
+	char				*res;
+	char				rec[10];
 	int					n;
 	unsigned char		val;
 	pthread_t			thread;
@@ -37,5 +46,16 @@ typedef struct			s_data
 
 void					set_input_mode(void);
 void					reset_input_mode(void);
-
+/*take one bit from gpio*/
+int						rec_one_bit(int gpioclk, int gpiodata);
+/*Send bit to gpio*/
+void					send_one_bit(int gpioclk, int gpiodata, int bit);
+/*send the stop bit signaling end of transaction*/
+void					send_stop(int gpioclk, int gpiodata);
+/*send the start signal to gpio*/
+void					send_start(int gpioclk, int gpiodata);
+/*send nbits to the gpio, *octets must contain addresses for all the required bits one after the other*/
+void					send_bits(int nbits, char *octets, int gpiodata, int gpioclk);
+/*return a char * containing all the received bits one after the other*/
+char					*rec_bits(int nbits, int gpiodata, int gpioclk);
 #endif

@@ -1,3 +1,4 @@
+#include <time.h>
 #include <stdio.h>
 #include <unistd.h>
 #include <signal.h>
@@ -5,8 +6,6 @@
 #include "pulse.h"
 #include <stdlib.h>
 #include <pthread.h>
-
-void sigintHandler(int sig);
 
 static void		close_all(t_data *data)
 {
@@ -18,14 +17,25 @@ static void		close_all(t_data *data)
 	printf("Operation done, have a good day.\n");
 }
 
-static void		make_bytes(t_data *data, int chan)
+static char		make_addr(int addr, int rw) //return first octet
 {
-	data->bytes = (char *)malloc(sizeof(char) * 5);
-	data->bytes[5] = '\0';
-	data->bytes[0] = 0x48;
-	data->bytes[0] = data->bytes[0] << 1;
-	data->bytes[0] = data->bytes[0] | 1;
-//	data->bytes[1] = 0x40 + chan;
+	char		res;
+	printf("addr = %d, rw = %d\n", addr, rw);
+	res = addr;			//res is addr + rw
+ 	res = res << 1;
+	res = res | rw;	//byte[4] will be the received data;
+	return (res);
+}
+
+static char		make_register(char ana_out, char chan)
+{
+	char	res;
+	char	tmp;
+
+	tmp = ana_out;
+	tmp = tmp << 8;
+	res = chan + tmp;
+	return (res);
 }
 
 static void		send_bit(int gpioclk, int gpiodata, int tmp)
@@ -35,7 +45,6 @@ static void		send_bit(int gpioclk, int gpiodata, int tmp)
 	gpioDelay(4);
 	gpioWrite(gpioclk, HIGH);
 	gpioDelay(4);
-//	gpioWrite(gpiodata, HIGH); //start bit
 }
 
 static int		receive_bit(int gpioclk, int gpiodata)
@@ -43,8 +52,8 @@ static int		receive_bit(int gpioclk, int gpiodata)
 	int		tmp;
 
 	gpioWrite(gpioclk, LOW);
-	tmp = gpioRead(gpiodata); //start bit
 	gpioDelay(4);
+	tmp = gpioRead(gpiodata); //start bit
 	gpioWrite(gpioclk, HIGH);
 	gpioDelay(4);
 	return (tmp);
@@ -55,7 +64,7 @@ static int		wait_clk(int gpioclk, int gpiodata)
 	int		i;
 
 	i = 0;
-	while (i < 1000)
+	while (i <= 500)
 	{
 		if (receive_bit(gpioclk, gpiodata))
 			return (1);
@@ -65,23 +74,39 @@ static int		wait_clk(int gpioclk, int gpiodata)
 	return (0);
 }
 
-static char		read_gpio(int gpioclk, int gpiodata, char addr)
+void			*f_input(void *dta)
 {
-	int		nbit;
-	char	tmp;
-	char	tmp2;
-	char	res;
+	char		c;
+
+	(void)dta;
+	while (1)
+	{
+		read(STDIN_FILENO, &c, 1);
+		if (c == 27)
+		{
+			ctrl_c_pressed = 1;
+			break;
+		}
+	}
+	return (NULL);
+}
+
+/*static char		read_gpio(int gpioclk, int gpiodata, char addr)
+{
+	int			nbit;
+	char		tmp;
+	char		tmp2;
+	char		res;
 
 	gpioSetMode(gpiodata, PI_OUTPUT);
 	gpioWrite(gpioclk, HIGH);
 	gpioWrite(gpiodata, HIGH);
-	gpioWrite(gpiodata, LOW); //send start signal
+	gpioWrite(gpiodata, LOW);
 	gpioDelay(4);
 	gpioWrite(gpioclk, LOW);
 	gpioDelay(4);
 	nbit = 7;
 	tmp2 = 128;
-//	printf("addr = %d\n", addr);
 	while (nbit >= 0)
 	{
 		tmp = addr;
@@ -92,10 +117,10 @@ static char		read_gpio(int gpioclk, int gpiodata, char addr)
 		tmp2 = tmp2 >> 1;
 	}
 	gpioSetMode(gpiodata, PI_INPUT);
-	if (!wait_clk(gpioclk, gpiodata))
+	if (!(wait_clk(gpioclk, gpiodata)))
 	{
-		printf("gpioclk timed out\n");
-		return (-1);
+		printf("Clock timed out\n");
+		return (0);
 	}
 	nbit = 0;
 	res = 0;
@@ -106,15 +131,88 @@ static char		read_gpio(int gpioclk, int gpiodata, char addr)
 		{
 			res = res + tmp;
 			res = res << 1;
-//			printf("%d", tmp);
 		}
 		nbit++;
 	}
-//	printf("\n");
-	gpioSetMode(gpiodata, PI_OUTPUT);
 	gpioWrite(gpiodata, HIGH);
 	return (res);
 }
+
+static void		rec_gpio(t_data *data, int nbit)
+{
+	int		cbit;
+	int		res;
+	int		xbit;
+	int		tmp;
+	int		noctet;
+
+	cbit = 0;
+	noctet = 0;
+	xbit = 0;
+	gpioSetMode(data->gpiodata, PI_INPUT);
+	while (cbit < nbit)
+	{
+		xbit++;
+		tmp = receive_bit(data->gpioclk, data->gpiodata);
+		if (xbit <= 8)
+		{
+			res = res + tmp;
+			res = res << 1;
+		}
+		else
+		{
+			xbit = 0;
+			data->rec[noctet] = res;
+			noctet++;
+			res = 0;
+		}
+		cbit++;
+	}
+}
+
+static int		send_gpio(int gpiodata, int gpioclk, char *bytes, int noctet, t_data *data)
+{
+	int			nbit;
+	char		tmp;
+	char		mask;
+	char		res;
+	int			t;
+	int			ioctet;
+
+	ioctet = 0;
+	res = 0;
+	t = 0;
+	gpioSetMode(gpiodata, PI_OUTPUT);
+	gpioWrite(gpioclk, HIGH);
+	gpioWrite(gpiodata, HIGH);
+	gpioWrite(gpiodata, LOW);
+	gpioDelay(4);
+	gpioWrite(gpioclk, LOW);
+	gpioDelay(4);
+	while (ioctet < noctet)
+	{
+		nbit = 7;
+		mask = 128;
+		while (nbit >= 0)
+		{
+			tmp = bytes[ioctet];
+			tmp = tmp & mask;
+			tmp = tmp >> nbit;
+			send_bit(gpioclk, gpiodata, tmp);
+			nbit--;
+			mask = mask >> 1;
+		}
+		gpioWrite(gpioclk, LOW);
+		gpioSetMode(data->gpiodata, PI_INPUT);
+		if (!(wait_clk(gpioclk, gpiodata)))
+			printf("Clock timed out\n");
+		gpioWrite(gpioclk, HIGH);
+		gpioSetMode(gpiodata, PI_OUTPUT);
+		ioctet++;
+	}
+	gpioSetMode(data->gpiodata, PI_INPUT);
+	return (res);
+}*/
 
 static int		initialise(t_data *data)
 {
@@ -124,18 +222,19 @@ static int		initialise(t_data *data)
 		printf("Allocation failed\n");
 		exit(-1);
 	}
-	data->n = 99;
+	set_input_mode();
 	return (0);
 }
 
 int				main()
 {
-	t_data	data;
-	int		err;
-	char	res;
+	t_data		data;
+	pthread_t	input_thread;
+	char		reg;
 
 	initialise(&data);
-	data.addr = ADDR;
+	pthread_create(&input_thread, NULL, &f_input, &data);
+	reg = 0;
 	if (gpioInitialise() < 0)
 	{
 		fprintf(stderr, "pigpio initialisation failed\n");
@@ -144,14 +243,24 @@ int				main()
 	data.gpioclk = 27;
 	data.gpiodata = 17;
 	gpioSetMode(data.gpioclk, PI_OUTPUT);
-	gpioSetMode(data.gpiodata, PI_OUTPUT);
-	signal(SIGINT, sigintHandler);
-	make_bytes(&data, 1);
+	data.bytes[0] = make_addr(0x48, WRITEGPIO);
+	data.bytes[1] = make_addr(0x48, READGPIO);
+	gpioWrite(data.gpioclk, HIGH);
+	gpioWrite(data.gpiodata, HIGH);
+	gpioDelay(10);
+	send_start(data.gpioclk, data.gpiodata);
+	send_bits(8, &data.bytes[0], data.gpiodata, data.gpioclk);
+	send_bits(8, &reg, data.gpiodata, data.gpioclk);
 	while (1)
 	{
-		res = read_gpio(data.gpioclk, data.gpiodata, data.bytes[0]);
-		printf("%d\n", res);
-		gpioDelay(500);
+//		send_gpio(data.gpiodata, data.gpioclk, data.bytes, 2, &data);
+//		rec_gpio(&data, 8);
+		send_start(data.gpioclk, data.gpiodata);
+		send_bits(8, &data.bytes[1], data.gpiodata, data.gpioclk);
+		data.res = rec_bits(8, data.gpiodata, data.gpioclk);
+//		send_stop(data.gpioclk, data.gpiodata);
+		printf("rec = %d\n", data.res[0]);
+		gpioDelay(1000);
 		if (ctrl_c_pressed)
 		{
 			close_all(&data);
@@ -161,9 +270,3 @@ int				main()
    return (0);
 }
 
-void sigintHandler(int sig)
-{
-	signal(SIGINT, sigintHandler);
-	ctrl_c_pressed = 1;
-	(void)sig;
-}

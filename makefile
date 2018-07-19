@@ -44,7 +44,6 @@ re: fclean all
 
 test: re
 	$(call colorecho, 5, "Creating backup file...")
-	@cp $(TMP) garbage/$(BKUPNAME)
 	$(call colorecho, 3, "-------------------------")
 	$(call colorecho, 3, "Begin test phase.")
 	$(call colorecho, 3, "-------------------------")
@@ -52,6 +51,3 @@ test: re
 
 compare:
 	sudo ../../../electro/Code/C_Code/07.1.1_PCF8591/pop
-
-backup:
-	cp -rf ../pulse/ ../pulseb$(BKUPNAME)
