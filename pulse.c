@@ -1,3 +1,4 @@
+#include <time.h>
 #include <stdio.h>
 #include <unistd.h>
 #include <signal.h>
@@ -6,151 +7,88 @@
 #include <stdlib.h>
 #include <pthread.h>
 
-void sigintHandler(int sig);
-
 static void		close_all(t_data *data)
 {
 	printf("Terminating gpio operations.\n");
 	gpioWrite(data->gpioclk, 0);
 	gpioWrite(data->gpiodata, 0);
+	printf("Shutting down leds\n");
+	gpioWrite(26, 0);
 	gpioTerminate();
 	printf("Unallocating memory slots.\n");
 	printf("Operation done, have a good day.\n");
 }
 
-static void		make_bytes(t_data *data, int chan)
+void			*f_input(void *dta)
 {
-	data->bytes = (char *)malloc(sizeof(char) * 5);
-	data->bytes[5] = '\0';
-	data->bytes[0] = 0x48;
-	data->bytes[0] = data->bytes[0] << 1;
-	data->bytes[0] = data->bytes[0] | 1;
-//	data->bytes[1] = 0x40 + chan;
-}
+	char		c;
 
-static void		send_bit(int gpioclk, int gpiodata, int tmp)
-{
-	gpioWrite(gpioclk, LOW);
-	gpioWrite(gpiodata, tmp); //start bit
-	gpioDelay(4);
-	gpioWrite(gpioclk, HIGH);
-	gpioDelay(4);
-//	gpioWrite(gpiodata, HIGH); //start bit
-}
-
-static int		receive_bit(int gpioclk, int gpiodata)
-{
-	int		tmp;
-
-	gpioWrite(gpioclk, LOW);
-	tmp = gpioRead(gpiodata); //start bit
-	gpioDelay(4);
-	gpioWrite(gpioclk, HIGH);
-	gpioDelay(4);
-	return (tmp);
-}
-
-static int		wait_clk(int gpioclk, int gpiodata)
-{
-	int		i;
-
-	i = 0;
-	while (i < 1000)
+	(void)dta;
+	while (1)
 	{
-		if (receive_bit(gpioclk, gpiodata))
-			return (1);
-		i++;
-		gpioDelay(1);
-	}
-	return (0);
-}
-
-static char		read_gpio(int gpioclk, int gpiodata, char addr)
-{
-	int		nbit;
-	char	tmp;
-	char	tmp2;
-	char	res;
-
-	gpioSetMode(gpiodata, PI_OUTPUT);
-	gpioWrite(gpioclk, HIGH);
-	gpioWrite(gpiodata, HIGH);
-	gpioWrite(gpiodata, LOW); //send start signal
-	gpioDelay(4);
-	gpioWrite(gpioclk, LOW);
-	gpioDelay(4);
-	nbit = 7;
-	tmp2 = 128;
-//	printf("addr = %d\n", addr);
-	while (nbit >= 0)
-	{
-		tmp = addr;
-		tmp = tmp & tmp2;
-		tmp = tmp >> nbit;
-		send_bit(gpioclk, gpiodata, tmp);
-		nbit--;
-		tmp2 = tmp2 >> 1;
-	}
-	gpioSetMode(gpiodata, PI_INPUT);
-	if (!wait_clk(gpioclk, gpiodata))
-	{
-		printf("gpioclk timed out\n");
-		return (-1);
-	}
-	nbit = 0;
-	res = 0;
-	while (nbit < 10)
-	{
-		tmp = receive_bit(gpioclk, gpiodata);
-		if (nbit < 8)
+		read(STDIN_FILENO, &c, 1);
+		if (c == 27)
 		{
-			res = res + tmp;
-			res = res << 1;
-//			printf("%d", tmp);
+			ctrl_c_pressed = 1;
+			break;
 		}
-		nbit++;
+		if (c == 'a')
+		{
+			if (a_is_pressed == 1)
+				a_is_pressed = 0;
+			else
+				a_is_pressed = 1;
+		}
 	}
-//	printf("\n");
-	gpioSetMode(gpiodata, PI_OUTPUT);
-	gpioWrite(gpiodata, HIGH);
-	return (res);
+	return (NULL);
 }
 
-static int		initialise(t_data *data)
+static t_data		initialise()
 {
-	ctrl_c_pressed = 0;
-	if ((data = (t_data *)malloc(sizeof(t_data))) == NULL)
+	t_data		data;
+
+	if (gpioInitialise() < 0)
 	{
-		printf("Allocation failed\n");
-		exit(-1);
+		fprintf(stderr, "pigpio initialisation failed\n");
+		exit(EXIT_FAILURE);
 	}
-	data->n = 99;
-	return (0);
+	ctrl_c_pressed = 0;
+	a_is_pressed = 0;
+	data.gpioclk = 27;
+	data.gpiodata = 17;
+	gpioSetMode(data.gpioclk, PI_OUTPUT);
+	gpioWrite(data.gpioclk, HIGH);
+	gpioWrite(data.gpiodata, HIGH);
+	data.av = (int *)malloc(sizeof(int) * IT_MAX);
+	set_input_mode();
+	return (data);
 }
 
 int				main()
 {
-	t_data	data;
-	int		err;
-	char	res;
+	t_data		data;
+	pthread_t	input_thread;
+	char		input_reg;
+	int			i;
+	char		res;
 
-	initialise(&data);
-	data.addr = ADDR;
-	if (gpioInitialise() < 0)
-	{
-		fprintf(stderr, "pigpio initialisation failed\n");
-		return (-1);
-	}
-	data.gpioclk = 27;
-	data.gpiodata = 17;
-	gpioSetMode(data.gpioclk, PI_OUTPUT);
-	gpioSetMode(data.gpiodata, PI_OUTPUT);
-	signal(SIGINT, sigintHandler);
-	make_bytes(&data, 1);
+	data = initialise();
+	pthread_create(&input_thread, NULL, &f_input, &data);
+	i = 0;
+	gpioDelay(10);
 	while (1)
 	{
-		res = read_gpio(data.gpioclk, data.gpiodata, data.bytes[0]);
-		printf("%d\n", res);
+		if (a_is_pressed == 1)
+			input_reg = 1;
+		else
+			input_reg = 0;
+		data.res = read_analog(input_reg, data.gpioclk, data.gpiodata, 8);
+		data.av[i] = data.res;
+		i >= 10 ? i = 0 : i++;
+		res = average(data.av, IT_MAX);
+		printf("a = %d rec = %d\n", a_is_pressed, res);
+		gpioDelay(500);
+		gpioPWM(26, res);
 		gpioDelay(500);
 		if (ctrl_c_pressed)
 		{
@@ -159,11 +97,4 @@ int				main()
 		}
 	}
    return (0);
-}
-
-void sigintHandler(int sig)
-{
-	signal(SIGINT, sigintHandler);
-	ctrl_c_pressed = 1;
-	(void)sig;
 }
